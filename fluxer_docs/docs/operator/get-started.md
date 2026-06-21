@@ -85,7 +85,7 @@ FLUXER_CADDY_SITE_ADDRESS=chat.example.com
 FLUXER_VAPID_EMAIL=admin@example.com
 ```
 
-For a Cloudflare Tunnel where Cloudflare terminates HTTPS and forwards HTTP to Caddy:
+For a Cloudflare Tunnel or an existing reverse proxy that terminates HTTPS and forwards HTTP to Caddy:
 
 ```ini
 FLUXER_DOMAIN=chat.example.com
@@ -95,7 +95,7 @@ FLUXER_CADDY_SITE_ADDRESS=:80
 FLUXER_VAPID_EMAIL=admin@example.com
 ```
 
-`FLUXER_PUBLIC_SCHEME` and `FLUXER_PUBLIC_PORT` describe what users see in their browser. `FLUXER_CADDY_SITE_ADDRESS` describes what Caddy listens on inside the stack.
+`FLUXER_PUBLIC_SCHEME` and `FLUXER_PUBLIC_PORT` describe what users see in their browser. `FLUXER_CADDY_SITE_ADDRESS` describes the internal docker network port that Caddy listens on inside the stack.
 
 Generate the required secrets:
 
@@ -167,6 +167,31 @@ Keep these defaults unless you know you need to change them:
 
     !!! warning "Voice media is not carried by a normal public hostname tunnel"
         The web app, API, admin dashboard, gateway WebSocket, media proxy HTTP routes, and LiveKit signaling can work through the tunnel. LiveKit WebRTC media still needs reachable `7881/tcp` and `7882/udp`, or a TURN deployment.
+
+=== "Reverse Proxy"
+
+    Use this if you have an existing reverse proxy that will handle ssl termination.
+
+    1. Set `FLUXER_CADDY_SITE_ADDRESS=:80`. This is the internal port and can be different from the assigned host port.
+    2. Remove or comment out the exposed 443 ports from the caddy service in the Compose file.
+		3(a). If the reverse proxy will also run inside the stack then the port 80 bind can be removed as well.
+		3(b). If the reverse proxy will not run inside of the stack or is on another machine, bind your disired host port to caddy.
+					```
+					services:
+  					caddy:
+    					image: caddy:2.10-alpine
+    					restart: unless-stopped
+    					networks: [fluxer]
+    					ports:
+      					- "8180:80" #8180 used as an example
+					```
+		
+    4(a). If the reverse proxy runs inside the Compose project, point the hostname to `http://caddy:80`.
+    4(b). If the reverse proxy runs directly on the host, point the hostname to `http://127.0.0.1:8180`.
+		4(c). If the reverse proxy runs on a different host (example 10.x.x.x), point the hostname to `http://10.x.x.x:8180`.
+
+    !!! warning "Voice media is not carried by a normal http/https traffic"
+        The web app, API, admin dashboard, gateway WebSocket, media proxy HTTP routes, and LiveKit signaling can work through the http/https proxy. LiveKit WebRTC media still needs reachable `7881/tcp` and `7882/udp`, or a TURN deployment.
 
 ## Step 5: Open the firewall
 
