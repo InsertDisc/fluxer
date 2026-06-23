@@ -85,7 +85,7 @@ FLUXER_CADDY_SITE_ADDRESS=chat.example.com
 FLUXER_VAPID_EMAIL=admin@example.com
 ```
 
-For a Cloudflare Tunnel or an existing reverse proxy that terminates HTTPS and forwards HTTP to Caddy:
+For a Cloudflare Tunnel or reverse proxy that terminates HTTPS and forwards HTTP to Caddy:
 
 ```ini
 FLUXER_DOMAIN=chat.example.com
@@ -128,86 +128,80 @@ Keep these defaults unless you know you need to change them:
 
 ## Step 4: Publish the hostname
 
-### :: Direct public server ::
+=== "Direct public server"
 
-  Create DNS records for the hostname:
+    Create DNS records for the hostname:
 
-  - `A` record from `chat.example.com` to the server IPv4 address.
-  - Optional `AAAA` record from `chat.example.com` to the server IPv6 address.
+    - `A` record from `chat.example.com` to the server IPv4 address.
+    - Optional `AAAA` record from `chat.example.com` to the server IPv6 address.
 
-  Leave `FLUXER_CADDY_SITE_ADDRESS=chat.example.com`. Caddy will request and renew certificates automatically when `80/tcp` and `443/tcp` can reach the server.
+    Leave `FLUXER_CADDY_SITE_ADDRESS=chat.example.com`. Caddy will request and renew certificates automatically when `80/tcp` and `443/tcp` can reach the server.
 
----
-### :: Cloudflare Tunnel ::
+=== "Cloudflare Tunnel"
 
+    Use this when the server should not expose public web ports.
 
-  Use this when the server should not expose public web ports.
+    1. Set `FLUXER_CADDY_SITE_ADDRESS=:80`.
+    2. In Cloudflare, create a Tunnel public hostname for your Fluxer domain.
+    3. If `cloudflared` runs inside the Compose project, point the public hostname service to `http://caddy:80`.
+    4. If `cloudflared` runs directly on the host, point the public hostname service to `http://127.0.0.1:80`.
 
-  1. Set `FLUXER_CADDY_SITE_ADDRESS=:80`.
-  2. In Cloudflare, create a Tunnel public hostname for your Fluxer domain.
-  3. If `cloudflared` runs inside the Compose project, point the public hostname service to `http://caddy:80`.
-  4. If `cloudflared` runs directly on the host, point the public hostname service to `http://127.0.0.1:80`.
+    A temporary Compose override keeps the tunnel next to Caddy without saving the token in your main stack:
 
-  A temporary Compose override keeps the tunnel next to Caddy without saving the token in your main stack:
+    ```bash
+    cat > cloudflared.compose.yml <<'YAML'
+    services:
+      cloudflared:
+        image: cloudflare/cloudflared:latest
+        restart: unless-stopped
+        command: tunnel run --token ${CLOUDFLARED_TOKEN:?set CLOUDFLARED_TOKEN}
+        depends_on:
+          - caddy
+        networks:
+          - fluxer
 
-  ```bash
-  cat > cloudflared.compose.yml <<'YAML'
-  services:
-    cloudflared:
-      image: cloudflare/cloudflared:latest
-      restart: unless-stopped
-      command: tunnel run --token ${CLOUDFLARED_TOKEN:?set CLOUDFLARED_TOKEN}
-      depends_on:
-        - caddy
-      networks:
-        - fluxer
+    YAML
+    ```
+    ```bash
+    export CLOUDFLARED_TOKEN='paste-your-tunnel-token-here'
+    docker compose -f docker-compose.yml -f cloudflared.compose.yml up -d cloudflared
+    ```
 
-  YAML
-  ```
-  ```bash
-  export CLOUDFLARED_TOKEN='paste-your-tunnel-token-here'
-  docker compose -f docker-compose.yml -f cloudflared.compose.yml up -d cloudflared
-  ```
+    !!! warning "Voice media is not carried by a normal public hostname tunnel. The web app, API, admin dashboard, gateway WebSocket, media proxy HTTP routes, and LiveKit signaling can work through the tunnel. LiveKit WebRTC media still needs reachable `7881/tcp` and `7882/udp`, or a TURN deployment."
 
-  !!! warning "Voice media is not carried by a normal public hostname tunnel"
-      The web app, API, admin dashboard, gateway WebSocket, media proxy HTTP routes, and LiveKit signaling can work through the tunnel. LiveKit WebRTC media still needs reachable `7881/tcp` and `7882/udp`, or a TURN deployment.
+=== "Reverse Proxy"
 
----
-### :: Reverse Proxy ::
-
-
-  Use this if you have an existing reverse proxy that will handle ssl termination.
+    Use this if you have an existing reverse proxy that will handle ssl termination.
     
-  Create DNS records for the hostname:
-  - `A` record from `chat.example.com` to the reverse proxy server IPv4 address.
-  - Optional `AAAA` record from `chat.example.com` to the reverse proxy server IPv6 address.
+    Create DNS records for the hostname:
 
-  1. Set `FLUXER_CADDY_SITE_ADDRESS=:80`. This is the internal port and can be different from the assigned host port.
-  2. Remove or comment out the exposed 443 ports from the caddy service in the Compose file.
-  3. If the reverse proxy will also run inside the stack then the port 80 bind can be removed as well.
-  If it will not run inside the stack or is on another machine, bind your desired host port to caddy:
+    - `A` record from `chat.example.com` to the reverse proxy server IPv4 address.
+    - Optional `AAAA` record from `chat.example.com` to the reverse proxy server IPv6 address.
+    
+    Fluxer Configuration:
 
-  ```yaml
-  services:
-    caddy:
-      image: caddy:2.10-alpine
-      restart: unless-stopped
-      networks: [fluxer]
-      ports:
-        - "8180:80" # example
-  ```
+    1. Set `FLUXER_CADDY_SITE_ADDRESS=:80`. This is the port Caddy listens on inside the Docker network.
+    2. Remove or comment out the exposed 443 ports from the caddy service in the Compose file.
+    3. If the reverse proxy will also run inside the stack then the port 80 bind can be removed. If it will not run inside the stack or is on another machine, bind your desired host port to caddy:
 
-  5. Reverse proxy target:
+    ```yaml
+    services:
+      caddy:
+        image: caddy:2.10-alpine
+        restart: unless-stopped
+        networks: [fluxer]
+        ports:
+          - "8180:80" # example
+    ```
 
-  - Inside compose stack and part of `-fluxer` network: `http://caddy:80`  
-  - Same host: `http://127.0.0.1:8180`
-  - Remote host: `http://10.x.x.x:8180`
+    Reverse proxy target
 
-  6. Make sure WebSockets support is enabled in the reverse proxy for this host.
+    - Inside compose stack and part of `-fluxer` network: `http://caddy:80`  
+    - Same host: `http://127.0.0.1:8180`
+    - Remote host: `http://10.x.x.x:8180`
+    - Make sure WebSockets support is enabled in the reverse proxy for this host.
 
-  !!! warning "Voice media is not carried by normal HTTP/HTTPS traffic"
-	The web app, API, admin dashboard, gateway WebSocket, media proxy HTTP routes, and LiveKit signaling can work through the HTTP proxy.  
-  LiveKit WebRTC media still needs `7881/tcp` and `7882/udp`, or a TURN server.
+    !!! warning "Voice media is not carried by normal HTTP/HTTPS traffic. The web app, API, admin dashboard, gateway WebSocket, media proxy HTTP routes, and LiveKit signaling can work through the HTTP proxy. LiveKit WebRTC media still needs `7881/tcp` and `7882/udp`, or a TURN server."
 
 ## Step 5: Open the firewall
 
